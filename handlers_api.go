@@ -293,3 +293,102 @@ func (s *AppServer) myProfileHandler(c *gin.Context) {
 	c.Set("account", "ai-report")
 	respondSuccess(c, map[string]any{"data": result}, "获取我的主页成功")
 }
+
+// screenshotHandler 浏览器截图
+func (s *AppServer) screenshotHandler(c *gin.Context) {
+	var req ScreenshotRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", "请求参数错误", err.Error())
+		return
+	}
+
+	result, err := s.xiaohongshuService.BrowserScreenshot(c.Request.Context(), &req)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "SCREENSHOT_FAILED", "截图失败", err.Error())
+		return
+	}
+
+	respondSuccess(c, result, "截图成功")
+}
+
+// persistentBrowserHandler 持久浏览器管理
+func (s *AppServer) persistentBrowserHandler(c *gin.Context) {
+	var req PersistentBrowserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", "请求参数错误", err.Error())
+		return
+	}
+
+	switch req.Action {
+	case "start":
+		if s.xiaohongshuService.IsPersistentBrowserRunning() {
+			respondSuccess(c, PersistentBrowserResponse{Running: true, Message: "持久浏览器已经在运行中"}, "操作成功")
+			return
+		}
+		if err := s.xiaohongshuService.StartPersistentBrowser(req.Headless); err != nil {
+			respondError(c, http.StatusInternalServerError, "START_FAILED", "启动失败", err.Error())
+			return
+		}
+		// 如果提供了 URL，立即导航
+		if req.URL != "" {
+			if err := s.xiaohongshuService.NavigatePersistentPage(c.Request.Context(), req.URL); err != nil {
+				respondError(c, http.StatusInternalServerError, "NAVIGATE_FAILED", "浏览器启动成功，但导航失败", err.Error())
+				return
+			}
+			respondSuccess(c, PersistentBrowserResponse{Running: true, URL: req.URL, Message: "持久浏览器已启动并导航到指定URL"}, "操作成功")
+			return
+		}
+		respondSuccess(c, PersistentBrowserResponse{Running: true, Message: "持久浏览器已启动"}, "操作成功")
+
+	case "close":
+		if !s.xiaohongshuService.IsPersistentBrowserRunning() {
+			respondSuccess(c, PersistentBrowserResponse{Running: false, Message: "持久浏览器未在运行"}, "操作成功")
+			return
+		}
+		if err := s.xiaohongshuService.ClosePersistentBrowser(); err != nil {
+			respondError(c, http.StatusInternalServerError, "CLOSE_FAILED", "关闭失败", err.Error())
+			return
+		}
+		respondSuccess(c, PersistentBrowserResponse{Running: false, Message: "持久浏览器已关闭"}, "操作成功")
+
+	case "navigate":
+		if req.URL == "" {
+			respondError(c, http.StatusBadRequest, "MISSING_URL", "缺少 URL 参数", nil)
+			return
+		}
+		if err := s.xiaohongshuService.NavigatePersistentPage(c.Request.Context(), req.URL); err != nil {
+			respondError(c, http.StatusInternalServerError, "NAVIGATE_FAILED", "导航失败", err.Error())
+			return
+		}
+		respondSuccess(c, PersistentBrowserResponse{Running: true, URL: req.URL, Message: "导航成功"}, "操作成功")
+
+	case "status":
+		running := s.xiaohongshuService.IsPersistentBrowserRunning()
+		respondSuccess(c, PersistentBrowserResponse{Running: running, Message: "获取状态成功"}, "操作成功")
+
+	default:
+		respondError(c, http.StatusBadRequest, "INVALID_ACTION", "无效的操作类型，支持: start|close|navigate|status", nil)
+	}
+}
+
+// screenshotCurrentPageHandler 截图当前持久浏览器页面
+func (s *AppServer) screenshotCurrentPageHandler(c *gin.Context) {
+	var req ScreenshotCurrentPageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", "请求参数错误", err.Error())
+		return
+	}
+
+	if !s.xiaohongshuService.IsPersistentBrowserRunning() {
+		respondError(c, http.StatusServiceUnavailable, "BROWSER_NOT_RUNNING", "持久浏览器未启动", "请先调用 /api/v1/persistent_browser (action=start) 启动浏览器")
+		return
+	}
+
+	result, err := s.xiaohongshuService.ScreenshotCurrentPage(c.Request.Context(), &req)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "SCREENSHOT_FAILED", "截图失败", err.Error())
+		return
+	}
+
+	respondSuccess(c, result, "截图成功")
+}

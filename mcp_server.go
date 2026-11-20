@@ -100,6 +100,44 @@ type FavoriteFeedArgs struct {
 	Unfavorite bool   `json:"unfavorite,omitempty" jsonschema:"是否取消收藏，true为取消收藏，false或未设置则为收藏"`
 }
 
+// ScreenshotArgs 浏览器截图参数
+type ScreenshotArgs struct {
+	URL          string `json:"url" jsonschema:"目标网页 URL（必需）"`
+	FullPage     bool   `json:"full_page,omitempty" jsonschema:"是否截取整页，默认为 false（只截取当前视口）"`
+	Width        int    `json:"width,omitempty" jsonschema:"视口宽度，默认 1280"`
+	Height       int    `json:"height,omitempty" jsonschema:"视口高度，默认 720"`
+	Selector     string `json:"selector,omitempty" jsonschema:"CSS 选择器，如果指定则只截取该元素"`
+	WaitSelector string `json:"wait_selector,omitempty" jsonschema:"等待指定 CSS 选择器元素出现后再截图"`
+	WaitTimeout  int    `json:"wait_timeout,omitempty" jsonschema:"等待超时秒数，默认 30"`
+}
+
+// ScreenshotCurrentPageArgs 截图当前页面参数
+type ScreenshotCurrentPageArgs struct {
+	FullPage     bool   `json:"full_page,omitempty" jsonschema:"是否截取整页，默认为 false（只截取当前视口）"`
+	Selector     string `json:"selector,omitempty" jsonschema:"CSS 选择器，如果指定则只截取该元素"`
+	WaitSelector string `json:"wait_selector,omitempty" jsonschema:"等待指定 CSS 选择器元素出现后再截图"`
+	WaitTimeout  int    `json:"wait_timeout,omitempty" jsonschema:"等待超时秒数，默认 30"`
+}
+
+// FollowUserArgs 关注用户的参数
+type FollowUserArgs struct {
+	UserID    string `json:"user_id" jsonschema:"小红书用户ID，从用户主页或帖子详情获取"`
+	XsecToken string `json:"xsec_token" jsonschema:"访问令牌，从Feed列表的xsecToken字段获取"`
+}
+
+// FollowUserFromFeedArgs 从帖子详情页关注用户的参数
+type FollowUserFromFeedArgs struct {
+	FeedID    string `json:"feed_id" jsonschema:"小红书笔记ID，从Feed列表获取"`
+	XsecToken string `json:"xsec_token" jsonschema:"访问令牌，从Feed列表的xsecToken字段获取"`
+}
+
+// PersistentBrowserArgs 持久浏览器操作参数
+type PersistentBrowserArgs struct {
+	Action   string `json:"action" jsonschema:"操作类型: start(启动)|close(关闭)|navigate(导航)|status(状态)"`
+	Headless bool   `json:"headless,omitempty" jsonschema:"启动时是否使用无头模式，默认为 false"`
+	URL      string `json:"url,omitempty" jsonschema:"导航操作的目标 URL"`
+}
+
 // InitMCPServer 初始化 MCP Server
 func InitMCPServer(appServer *AppServer) *mcp.Server {
 	// 创建 MCP Server
@@ -443,7 +481,87 @@ func registerTools(server *mcp.Server, appServer *AppServer) {
 		}),
 	)
 
-	logrus.Infof("Registered %d MCP tools", 13)
+	// 工具 14: 浏览器截图
+	mcp.AddTool(server,
+		&mcp.Tool{
+			Name:        "browser_screenshot",
+			Description: "截取指定网页的屏幕截图，支持整页截图或指定元素截图",
+			Annotations: &mcp.ToolAnnotations{
+				Title:        "Browser Screenshot",
+				ReadOnlyHint: true,
+			},
+		},
+		withPanicRecovery("browser_screenshot", func(ctx context.Context, req *mcp.CallToolRequest, args ScreenshotArgs) (*mcp.CallToolResult, any, error) {
+			result := appServer.handleBrowserScreenshot(ctx, args)
+			return convertToMCPResult(result), nil, nil
+		}),
+	)
+
+	// 工具 15: 管理持久浏览器
+	mcp.AddTool(server,
+		&mcp.Tool{
+			Name:        "persistent_browser",
+			Description: "管理持久浏览器实例: start(启动)|close(关闭)|navigate(导航)|status(查看状态)。启动后可使用 screenshot_current_page 截图当前页面",
+			Annotations: &mcp.ToolAnnotations{
+				Title:           "Persistent Browser",
+				DestructiveHint: boolPtr(true),
+			},
+		},
+		withPanicRecovery("persistent_browser", func(ctx context.Context, req *mcp.CallToolRequest, args PersistentBrowserArgs) (*mcp.CallToolResult, any, error) {
+			result := appServer.handlePersistentBrowser(ctx, args)
+			return convertToMCPResult(result), nil, nil
+		}),
+	)
+
+	// 工具 16: 截图当前页面
+	mcp.AddTool(server,
+		&mcp.Tool{
+			Name:        "screenshot_current_page",
+			Description: "截取持久浏览器当前页面的屏幕截图，需要先使用 persistent_browser 启动浏览器并导航到目标页面",
+			Annotations: &mcp.ToolAnnotations{
+				Title:        "Screenshot Current Page",
+				ReadOnlyHint: true,
+			},
+		},
+		withPanicRecovery("screenshot_current_page", func(ctx context.Context, req *mcp.CallToolRequest, args ScreenshotCurrentPageArgs) (*mcp.CallToolResult, any, error) {
+			result := appServer.handleScreenshotCurrentPage(ctx, args)
+			return convertToMCPResult(result), nil, nil
+		}),
+	)
+
+	// 工具 17: 关注用户
+	mcp.AddTool(server,
+		&mcp.Tool{
+			Name:        "follow_user",
+			Description: "关注指定的小红书用户（通过用户ID），需要先获取登录状态",
+			Annotations: &mcp.ToolAnnotations{
+				Title:           "Follow User",
+				DestructiveHint: boolPtr(true),
+			},
+		},
+		withPanicRecovery("follow_user", func(ctx context.Context, req *mcp.CallToolRequest, args FollowUserArgs) (*mcp.CallToolResult, any, error) {
+			result := appServer.handleFollowUser(ctx, args.UserID, args.XsecToken)
+			return convertToMCPResult(result), nil, nil
+		}),
+	)
+
+	// 工具 18: 从帖子详情页关注用户
+	mcp.AddTool(server,
+		&mcp.Tool{
+			Name:        "follow_user_from_feed",
+			Description: "从帖子详情页关注该帖子的作者，适用于在浏览帖子时直接关注作者",
+			Annotations: &mcp.ToolAnnotations{
+				Title:           "Follow User From Feed",
+				DestructiveHint: boolPtr(true),
+			},
+		},
+		withPanicRecovery("follow_user_from_feed", func(ctx context.Context, req *mcp.CallToolRequest, args FollowUserFromFeedArgs) (*mcp.CallToolResult, any, error) {
+			result := appServer.handleFollowUserFromFeed(ctx, args.FeedID, args.XsecToken)
+			return convertToMCPResult(result), nil, nil
+		}),
+	)
+
+	logrus.Infof("Registered %d MCP tools", 18)
 }
 
 // convertToMCPResult 将自定义的 MCPToolResult 转换为官方 SDK 的格式

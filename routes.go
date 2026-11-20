@@ -51,6 +51,9 @@ func setupRoutes(appServer *AppServer) *gin.Engine {
 		api.POST("/feeds/comment", appServer.postCommentHandler)
 		api.POST("/feeds/comment/reply", appServer.replyCommentHandler)
 		api.GET("/user/me", appServer.myProfileHandler)
+		api.POST("/screenshot", appServer.screenshotHandler)
+		api.POST("/persistent_browser", appServer.persistentBrowserHandler)
+		api.POST("/screenshot_current", appServer.screenshotCurrentPageHandler)
 	}
 
 	return router

@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
 	"os"
 	"time"
 
@@ -19,7 +22,10 @@ import (
 )
 
 // XiaohongshuService 小红书业务服务
-type XiaohongshuService struct{}
+type XiaohongshuService struct {
+	persistentBrowser *headless_browser.Browser
+	persistentPage    *rod.Page
+}
 
 // NewXiaohongshuService 创建小红书服务实例
 func NewXiaohongshuService() *XiaohongshuService {
@@ -597,4 +603,216 @@ func (s *XiaohongshuService) GetMyProfile(ctx context.Context) (*UserProfileResp
 	}
 
 	return response, nil
+}
+
+// BrowserScreenshot 浏览器截图
+func (s *XiaohongshuService) BrowserScreenshot(ctx context.Context, req *ScreenshotRequest) (*ScreenshotResponse, error) {
+	b := newBrowser()
+	defer b.Close()
+
+	page := b.NewPage()
+	defer page.Close()
+
+	// 设置默认视口
+	width := req.Width
+	height := req.Height
+	if width <= 0 {
+		width = 1280
+	}
+	if height <= 0 {
+		height = 720
+	}
+	page.MustSetViewport(width, height, 1.0, false)
+
+	// 导航到目标页面
+	page.MustNavigate(req.URL)
+	page.MustWaitLoad()
+
+	// 等待指定元素（如有）
+	if req.WaitSelector != "" {
+		timeout := req.WaitTimeout
+		if timeout <= 0 {
+			timeout = 30
+		}
+		page.Timeout(time.Duration(timeout) * time.Second).MustElement(req.WaitSelector)
+	}
+
+	// 执行截图
+	var imgData []byte
+	if req.FullPage {
+		imgData = page.MustScreenshotFullPage()
+	} else if req.Selector != "" {
+		el := page.MustElement(req.Selector)
+		imgData = el.MustScreenshot()
+	} else {
+		imgData = page.MustScreenshot()
+	}
+
+	// 编码为 Base64
+	imgBase64 := base64.StdEncoding.EncodeToString(imgData)
+
+	// 获取图片尺寸（通过解码）
+	img, _, err := image.DecodeConfig(bytes.NewReader(imgData))
+	if err != nil {
+		img = image.Config{Width: width, Height: height}
+	}
+
+	return &ScreenshotResponse{
+		ImageBase64: imgBase64,
+		URL:         req.URL,
+		Width:       img.Width,
+		Height:      img.Height,
+	}, nil
+}
+
+// PersistentBrowserManager 持久浏览器管理
+
+// StartPersistentBrowser 启动持久浏览器实例
+func (s *XiaohongshuService) StartPersistentBrowser(headless bool) error {
+	if s.persistentBrowser != nil {
+		return fmt.Errorf("持久浏览器已启动")
+	}
+
+	b := browser.NewBrowser(headless, browser.WithBinPath(configs.GetBinPath()))
+	s.persistentBrowser = b
+
+	// 创建页面
+	page := b.NewPage()
+	s.persistentPage = page
+
+	logrus.Info("持久浏览器已启动")
+	return nil
+}
+
+// ClosePersistentBrowser 关闭持久浏览器实例
+func (s *XiaohongshuService) ClosePersistentBrowser() error {
+	if s.persistentPage != nil {
+		if err := s.persistentPage.Close(); err != nil {
+			logrus.WithError(err).Warn("关闭持久页面失败")
+		}
+		s.persistentPage = nil
+	}
+
+	if s.persistentBrowser != nil {
+		s.persistentBrowser.Close()
+		s.persistentBrowser = nil
+	}
+
+	logrus.Info("持久浏览器已关闭")
+	return nil
+}
+
+// GetPersistentPage 获取持久页面实例（如未启动则返回错误）
+func (s *XiaohongshuService) GetPersistentPage() (*rod.Page, error) {
+	if s.persistentPage == nil {
+		return nil, fmt.Errorf("持久浏览器未启动，请先调用 StartPersistentBrowser")
+	}
+	return s.persistentPage, nil
+}
+
+// IsPersistentBrowserRunning 检查持久浏览器是否正在运行
+func (s *XiaohongshuService) IsPersistentBrowserRunning() bool {
+	return s.persistentBrowser != nil && s.persistentPage != nil
+}
+
+// NavigatePersistentPage 在持久页面中导航到指定 URL
+func (s *XiaohongshuService) NavigatePersistentPage(ctx context.Context, url string) error {
+	page, err := s.GetPersistentPage()
+	if err != nil {
+		return err
+	}
+
+	page = page.Context(ctx)
+	page.MustNavigate(url)
+	page.MustWaitLoad()
+
+	logrus.Infof("持久页面已导航到: %s", url)
+	return nil
+}
+
+// ScreenshotCurrentPage 截图当前持久浏览器页面
+type ScreenshotCurrentPageRequest struct {
+	FullPage     bool   `json:"full_page,omitempty"`     // 是否截取整页
+	Selector     string `json:"selector,omitempty"`      // CSS 选择器，截取指定元素
+	WaitSelector string `json:"wait_selector,omitempty"` // 等待指定元素出现后再截图
+	WaitTimeout  int    `json:"wait_timeout,omitempty"`  // 等待超时（秒，默认 30）
+}
+
+func (s *XiaohongshuService) ScreenshotCurrentPage(ctx context.Context, req *ScreenshotCurrentPageRequest) (*ScreenshotResponse, error) {
+	page, err := s.GetPersistentPage()
+	if err != nil {
+		return nil, err
+	}
+
+	page = page.Context(ctx)
+
+	// 等待指定元素（如有）
+	if req.WaitSelector != "" {
+		timeout := req.WaitTimeout
+		if timeout <= 0 {
+			timeout = 30
+		}
+		page.Timeout(time.Duration(timeout) * time.Second).MustElement(req.WaitSelector)
+	}
+
+	// 执行截图
+	var imgData []byte
+	if req.FullPage {
+		imgData = page.MustScreenshotFullPage()
+	} else if req.Selector != "" {
+		el := page.MustElement(req.Selector)
+		imgData = el.MustScreenshot()
+	} else {
+		imgData = page.MustScreenshot()
+	}
+
+	// 编码为 Base64
+	imgBase64 := base64.StdEncoding.EncodeToString(imgData)
+
+	// 获取图片尺寸（通过解码）
+	img, _, err := image.DecodeConfig(bytes.NewReader(imgData))
+	if err != nil {
+		// 如果无法解码，使用默认尺寸
+		img = image.Config{Width: 1280, Height: 720}
+	}
+
+	// 获取当前页面 URL
+	currentURL := page.MustInfo().URL
+
+	return &ScreenshotResponse{
+		ImageBase64: imgBase64,
+		URL:         currentURL,
+		Width:       img.Width,
+		Height:      img.Height,
+	}, nil
+}
+
+// FollowUser 关注指定用户
+func (s *XiaohongshuService) FollowUser(ctx context.Context, userID, xsecToken string) (*ActionResult, error) {
+	b := newBrowser()
+	defer b.Close()
+
+	page := b.NewPage()
+	defer page.Close()
+
+	action := xiaohongshu.NewFollowAction(page)
+	if err := action.FollowUser(ctx, userID, xsecToken); err != nil {
+		return nil, err
+	}
+	return &ActionResult{FeedID: userID, Success: true, Message: "关注成功"}, nil
+}
+
+// FollowUserFromFeed 从帖子详情页关注用户
+func (s *XiaohongshuService) FollowUserFromFeed(ctx context.Context, feedID, xsecToken string) (*ActionResult, error) {
+	b := newBrowser()
+	defer b.Close()
+
+	page := b.NewPage()
+	defer page.Close()
+
+	action := xiaohongshu.NewFollowAction(page)
+	if err := action.FollowUserFromFeed(ctx, feedID, xsecToken); err != nil {
+		return nil, err
+	}
+	return &ActionResult{FeedID: feedID, Success: true, Message: "关注成功"}, nil
 }

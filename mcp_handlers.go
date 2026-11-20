@@ -742,3 +742,227 @@ func (s *AppServer) handleReplyComment(ctx context.Context, args map[string]inte
 		}},
 	}
 }
+
+// handleBrowserScreenshot 处理浏览器截图请求
+func (s *AppServer) handleBrowserScreenshot(ctx context.Context, args ScreenshotArgs) *MCPToolResult {
+	logrus.Info("MCP: 浏览器截图")
+
+	// 参数校验
+	if args.URL == "" {
+		return &MCPToolResult{
+			Content: []MCPContent{{Type: "text", Text: "截图失败: 缺少 url 参数"}},
+			IsError: true,
+		}
+	}
+
+	// 构建请求
+	req := &ScreenshotRequest{
+		URL:          args.URL,
+		FullPage:     args.FullPage,
+		Width:        args.Width,
+		Height:       args.Height,
+		Selector:     args.Selector,
+		WaitSelector: args.WaitSelector,
+		WaitTimeout:  args.WaitTimeout,
+	}
+
+	// 调用服务
+	result, err := s.xiaohongshuService.BrowserScreenshot(ctx, req)
+	if err != nil {
+		return &MCPToolResult{
+			Content: []MCPContent{{Type: "text", Text: "截图失败: " + err.Error()}},
+			IsError: true,
+		}
+	}
+
+	// 返回图片 + 元数据
+	return &MCPToolResult{
+		Content: []MCPContent{
+			{Type: "text", Text: fmt.Sprintf("截图成功 - URL: %s, 尺寸: %dx%d", result.URL, result.Width, result.Height)},
+			{Type: "image", MimeType: "image/png", Data: result.ImageBase64},
+		},
+	}
+}
+
+// handlePersistentBrowser 处理持久浏览器管理请求
+func (s *AppServer) handlePersistentBrowser(ctx context.Context, args PersistentBrowserArgs) *MCPToolResult {
+	logrus.Infof("MCP: 持久浏览器管理 - 操作: %s", args.Action)
+
+	switch args.Action {
+	case "start":
+		if s.xiaohongshuService.IsPersistentBrowserRunning() {
+			return &MCPToolResult{
+				Content: []MCPContent{{Type: "text", Text: "持久浏览器已经在运行中"}},
+			}
+		}
+		if err := s.xiaohongshuService.StartPersistentBrowser(args.Headless); err != nil {
+			return &MCPToolResult{
+				Content: []MCPContent{{Type: "text", Text: "启动持久浏览器失败: " + err.Error()}},
+				IsError: true,
+			}
+		}
+		// 如果提供了 URL，立即导航
+		if args.URL != "" {
+			if err := s.xiaohongshuService.NavigatePersistentPage(ctx, args.URL); err != nil {
+				return &MCPToolResult{
+					Content: []MCPContent{{Type: "text", Text: "浏览器启动成功，但导航失败: " + err.Error()}},
+					IsError: true,
+				}
+			}
+			return &MCPToolResult{
+				Content: []MCPContent{{Type: "text", Text: fmt.Sprintf("持久浏览器已启动并导航到: %s", args.URL)}},
+			}
+		}
+		return &MCPToolResult{
+			Content: []MCPContent{{Type: "text", Text: "持久浏览器已启动"}},
+		}
+
+	case "close":
+		if !s.xiaohongshuService.IsPersistentBrowserRunning() {
+			return &MCPToolResult{
+				Content: []MCPContent{{Type: "text", Text: "持久浏览器未在运行"}},
+			}
+		}
+		if err := s.xiaohongshuService.ClosePersistentBrowser(); err != nil {
+			return &MCPToolResult{
+				Content: []MCPContent{{Type: "text", Text: "关闭持久浏览器失败: " + err.Error()}},
+				IsError: true,
+			}
+		}
+		return &MCPToolResult{
+			Content: []MCPContent{{Type: "text", Text: "持久浏览器已关闭"}},
+		}
+
+	case "navigate":
+		if args.URL == "" {
+			return &MCPToolResult{
+				Content: []MCPContent{{Type: "text", Text: "导航失败: 缺少 url 参数"}},
+				IsError: true,
+			}
+		}
+		if err := s.xiaohongshuService.NavigatePersistentPage(ctx, args.URL); err != nil {
+			return &MCPToolResult{
+				Content: []MCPContent{{Type: "text", Text: "导航失败: " + err.Error()}},
+				IsError: true,
+			}
+		}
+		return &MCPToolResult{
+			Content: []MCPContent{{Type: "text", Text: fmt.Sprintf("已导航到: %s", args.URL)}},
+		}
+
+	case "status":
+		running := s.xiaohongshuService.IsPersistentBrowserRunning()
+		if running {
+			return &MCPToolResult{
+				Content: []MCPContent{{Type: "text", Text: "持久浏览器状态: 运行中"}},
+			}
+		}
+		return &MCPToolResult{
+			Content: []MCPContent{{Type: "text", Text: "持久浏览器状态: 未启动"}},
+		}
+
+	default:
+		return &MCPToolResult{
+			Content: []MCPContent{{Type: "text", Text: fmt.Sprintf("未知操作: %s，支持的操作: start|close|navigate|status", args.Action)}},
+			IsError: true,
+		}
+	}
+}
+
+// handleScreenshotCurrentPage 处理截图当前页面请求
+func (s *AppServer) handleScreenshotCurrentPage(ctx context.Context, args ScreenshotCurrentPageArgs) *MCPToolResult {
+	logrus.Info("MCP: 截图当前页面")
+
+	// 检查持久浏览器是否运行
+	if !s.xiaohongshuService.IsPersistentBrowserRunning() {
+		return &MCPToolResult{
+			Content: []MCPContent{{Type: "text", Text: "截图失败: 持久浏览器未启动，请先使用 persistent_browser (action=start) 启动浏览器"}},
+			IsError: true,
+		}
+	}
+
+	// 构建请求
+	req := &ScreenshotCurrentPageRequest{
+		FullPage:     args.FullPage,
+		Selector:     args.Selector,
+		WaitSelector: args.WaitSelector,
+		WaitTimeout:  args.WaitTimeout,
+	}
+
+	// 调用服务
+	result, err := s.xiaohongshuService.ScreenshotCurrentPage(ctx, req)
+	if err != nil {
+		return &MCPToolResult{
+			Content: []MCPContent{{Type: "text", Text: "截图失败: " + err.Error()}},
+			IsError: true,
+		}
+	}
+
+	// 返回图片 + 元数据
+	return &MCPToolResult{
+		Content: []MCPContent{
+			{Type: "text", Text: fmt.Sprintf("截图成功 - URL: %s, 尺寸: %dx%d", result.URL, result.Width, result.Height)},
+			{Type: "image", MimeType: "image/png", Data: result.ImageBase64},
+		},
+	}
+}
+
+// handleFollowUser 处理关注用户请求
+func (s *AppServer) handleFollowUser(ctx context.Context, userID, xsecToken string) *MCPToolResult {
+	logrus.Infof("MCP: 关注用户 - User ID: %s", userID)
+
+	if userID == "" {
+		return &MCPToolResult{
+			Content: []MCPContent{{Type: "text", Text: "关注失败: 缺少user_id参数"}},
+			IsError: true,
+		}
+	}
+	if xsecToken == "" {
+		return &MCPToolResult{
+			Content: []MCPContent{{Type: "text", Text: "关注失败: 缺少xsec_token参数"}},
+			IsError: true,
+		}
+	}
+
+	result, err := s.xiaohongshuService.FollowUser(ctx, userID, xsecToken)
+	if err != nil {
+		return &MCPToolResult{
+			Content: []MCPContent{{Type: "text", Text: "关注失败: " + err.Error()}},
+			IsError: true,
+		}
+	}
+
+	return &MCPToolResult{
+		Content: []MCPContent{{Type: "text", Text: result.Message}},
+	}
+}
+
+// handleFollowUserFromFeed 处理从帖子详情页关注用户请求
+func (s *AppServer) handleFollowUserFromFeed(ctx context.Context, feedID, xsecToken string) *MCPToolResult {
+	logrus.Infof("MCP: 从帖子详情页关注用户 - Feed ID: %s", feedID)
+
+	if feedID == "" {
+		return &MCPToolResult{
+			Content: []MCPContent{{Type: "text", Text: "关注失败: 缺少feed_id参数"}},
+			IsError: true,
+		}
+	}
+	if xsecToken == "" {
+		return &MCPToolResult{
+			Content: []MCPContent{{Type: "text", Text: "关注失败: 缺少xsec_token参数"}},
+			IsError: true,
+		}
+	}
+
+	result, err := s.xiaohongshuService.FollowUserFromFeed(ctx, feedID, xsecToken)
+	if err != nil {
+		return &MCPToolResult{
+			Content: []MCPContent{{Type: "text", Text: "关注失败: " + err.Error()}},
+			IsError: true,
+		}
+	}
+
+	return &MCPToolResult{
+		Content: []MCPContent{{Type: "text", Text: result.Message}},
+	}
+}

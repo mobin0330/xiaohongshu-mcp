@@ -109,3 +109,49 @@ type ActionResult struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 }
+
+// ScreenshotRequest 浏览器截图请求
+type ScreenshotRequest struct {
+	URL          string `json:"url" binding:"required"`  // 目标网页 URL
+	FullPage     bool   `json:"full_page,omitempty"`     // 是否截取整页
+	Width        int    `json:"width,omitempty"`         // 视口宽度（默认 1280）
+	Height       int    `json:"height,omitempty"`        // 视口高度（默认 720）
+	Selector     string `json:"selector,omitempty"`      // CSS 选择器，截取指定元素
+	WaitSelector string `json:"wait_selector,omitempty"` // 等待指定元素出现后再截图
+	WaitTimeout  int    `json:"wait_timeout,omitempty"`  // 等待超时（秒，默认 30）
+}
+
+// ScreenshotResponse 浏览器截图响应
+type ScreenshotResponse struct {
+	ImageBase64 string `json:"image_base64"` // Base64 编码的图片
+	URL         string `json:"url"`          // 实际截图的 URL
+	Width       int    `json:"width"`        // 图片宽度
+	Height      int    `json:"height"`       // 图片高度
+}
+
+// PersistentBrowserRequest 持久浏览器操作请求
+type PersistentBrowserRequest struct {
+	Action   string `json:"action" binding:"required"` // 操作类型: start|close|navigate|status
+	Headless bool   `json:"headless,omitempty"`        // 是否无头模式（默认 false，显示界面）
+	URL      string `json:"url,omitempty"`             // 启动后要导航的 URL（可选）
+}
+
+// PersistentBrowserResponse 持久浏览器操作响应
+type PersistentBrowserResponse struct {
+	Running bool   `json:"running"`       // 浏览器是否正在运行
+	URL     string `json:"url,omitempty"` // 当前页面 URL
+	Message string `json:"message"`       // 操作结果消息
+}
+
+// FollowUserRequest 关注用户请求
+// FollowUserRequest 关注用户请求
+type FollowUserRequest struct {
+	UserID    string `json:"user_id" binding:"required"`    // 用户ID
+	XsecToken string `json:"xsec_token" binding:"required"` // 访问令牌
+}
+
+// FollowUserFromFeedRequest 从帖子详情页关注用户请求
+type FollowUserFromFeedRequest struct {
+	FeedID    string `json:"feed_id" binding:"required"`    // 帖子ID
+	XsecToken string `json:"xsec_token" binding:"required"` // 访问令牌
+}
